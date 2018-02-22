@@ -1,11 +1,16 @@
 videojs.registerPlugin('kioskApp', function() {
   var myPlayer,
-    proxyURL = 'https://solutions.brightcove.com/bcls/bcls-proxy/doc-samples-proxy.php',
-    cmsURL = 'https://cms.api.brightcove.com/v1/accounts/',
     totalCalls,
     callNumber = 0,
     allVideoObjects = [],
-    currentlyPlayingIndex;
+    currentlyPlayingIndex,
+    // Build options needed for CMS API request
+    options = {},
+    baseURL = "https://cms.api.brightcove.com/v1/accounts/",
+    accountId = "1752604059001";
+
+  options.proxyURL = "https://solutions.brightcove.com/bcls/bcls-proxy/brightcove-learning-proxy-v2.php";
+  options.requestType = "GET";
 
   videojs("myPlayerID").ready(function() {
     myPlayer = this;
@@ -17,22 +22,26 @@ videojs.registerPlugin('kioskApp', function() {
       videoCountRequest = {};
 
     // +++ Setup for video count CMS API request +++
-    videoCountRequest = setRequestData('getCount');
+    setRequestData("getCount");
     // Use CMSAPI to get video count
-    getCMSAPIData(videoCountRequest, function(parsedData) {
+    makeRequest(options, function(countData) {
+      // Convert response string into JSON
+      JSONcount = JSON.parse(countData);
       // Extract count from returned data
-      videoCount = parsedData.count;
+      videoCount = JSONcount.count;
       // Calculate number of calls that must be made
       // ask for 25 at a time (recommended best practice)
       totalCalls = Math.ceil(videoCount / 25);
       // Loop over requests for videos
       do {
         // Setup for video info CMS API request
-        videoIDRequest = setRequestData('getIDs');
+        setRequestData("getIDs");
         // Use CMS API to get each block of videos
-        getCMSAPIData(videoIDRequest, function(parsedData) {
+        makeRequest(options, function(videoData) {
+          // Convert response string into JSON
+          JSONvideos = JSON.parse(videoData);
           // Call function to extract IDs from video info
-          videoIDs = extractVideoData(parsedData);
+          videoIDs = extractVideoData(JSONvideos);
           // Call function to get video objects per IDs
           getVideoData(videoIDs, function(videoObjects) {
             //Push returned array into master array
@@ -73,66 +82,77 @@ videojs.registerPlugin('kioskApp', function() {
   /**
    * sets up the data for the API request
    */
-  function setRequestData(task) {
-    var accountId = '1752604059001',
-      videoName,
-      requestURL,
-      endPoint,
-      requestData = {},
-      dataReturned = false;
-    // Determine if setting up to get video count or video IDs
-    switch (task) {
-      case 'getCount':
-        requestURL = cmsURL + accountId + '/counts/videos';
-        break;
-      case 'getIDs':
-        requestURL = cmsURL + accountId + '/videos?limit=25&offset=' + 25 * callNumber;
-        break;
-    }
-    requestData.url = requestURL;
-    requestData.requestType = 'GET';
-    // Return the request object
-    return requestData;
-  }
+   function setRequestData(task) {
+     var videoName,
+       requestURL,
+       endPoint,
+       requestData = {},
+       dataReturned = false;
+     // Determine if setting up to get video count or video IDs
+     switch (task) {
+       case "getCount":
+         options.url = baseURL + accountId + "/counts/videos";
+         break;
+       case "getIDs":
+         options.url =
+           baseURL + accountId + "/videos?limit=25&offset=" + 25 * callNumber;
+         break;
+     }
+   }
 
   // +++ Standard functionality for CSM API call +++
   /**
-   * This function is used for all calls to CMS API and
-   *  returns the JSON parsed data, whatever that may be
+   * send API request to the proxy
+   * @param  {Object} options for the request
+   * @param  {String} options.url the full API request URL
+   * @param  {String="GET","POST","PATCH","PUT","DELETE"} requestData [options.requestType="GET"] HTTP type for the request
+   * @param  {String} options.proxyURL proxyURL to send the request to
+   * @param  {String} options.client_id client id for the account (default is in the proxy)
+   * @param  {String} options.client_secret client secret for the account (default is in the proxy)
+   * @param  {JSON} [options.requestBody] Data to be sent in the request body in the form of a JSON string
+   * @param  {Function} [callback] callback function that will process the response
    */
-  function getCMSAPIData(options, callback) {
+  function makeRequest(options, callback) {
     var httpRequest = new XMLHttpRequest(),
-      responseRaw,
-      parsedData,
-      requestParams;
-    // set up request data
-    requestParams = 'url=' + encodeURIComponent(options.url) + '&requestType=' + options.requestType;
+      response,
+      requestParams,
+      dataString,
+      proxyURL = options.proxyURL,
+      // response handler
+      getResponse = function() {
+        try {
+          if (httpRequest.readyState === 4) {
+            if (httpRequest.status >= 200 && httpRequest.status < 300) {
+              response = httpRequest.responseText;
+              // some API requests return '{null}' for empty responses - breaks JSON.parse
+              if (response === "{null}") {
+                response = null;
+              }
+              // return the response
+              callback(response);
+            } else {
+              alert(
+                "There was a problem with the request. Request returned " +
+                  httpRequest.status
+              );
+            }
+          }
+        } catch (e) {
+          alert("Caught Exception: " + e);
+        }
+      };
+    /**
+     * set up request data
+     * the proxy used here takes the following request body:
+     * JSON.strinify(options)
+     */
     // set response handler
     httpRequest.onreadystatechange = getResponse;
     // open the request
-    httpRequest.open('POST', proxyURL);
-    // set headers
-    httpRequest.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+    httpRequest.open("POST", proxyURL);
+    // set headers if there is a set header line, remove it
     // open and send request
-    httpRequest.send(requestParams);
-    // response handler
-    function getResponse() {
-      dataReturned = false;
-      try {
-        if (httpRequest.readyState === 4) {
-          if (httpRequest.status === 200) {
-            responseRaw = httpRequest.responseText;
-            parsedData = JSON.parse(responseRaw);
-            dataReturned = true;
-            callback(parsedData);
-          } else {
-            alert('There was a problem with the request. Request returned ' + httpRequest.status);
-          }
-        }
-      } catch (e) {
-        alert('Caught Exception: ' + e);
-      }
-    }
+    httpRequest.send(JSON.stringify(options));
   }
 
   // +++ Extract video IDs  +++
