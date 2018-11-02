@@ -12,7 +12,7 @@ videojs.registerPlugin('kioskApp', function() {
   options.proxyURL = "https://solutions.brightcove.com/bcls/bcls-proxy/brightcove-learning-proxy-v2.php";
   options.requestType = "GET";
 
-  videojs("myPlayerID").ready(function() {
+  videojs.getPlayer('myPlayerID').ready(function() {
     myPlayer = this;
     // Define key variables
     var videoIDs = [],
